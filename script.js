@@ -960,6 +960,10 @@ print("Score:", score)
 print("Grade:", grade)`,
 
 for_loop: `for i in range(1, 11):
+    print(i)
+    
+fruits = ["apple", "banana ", "cherry"]
+for i in fruits:
     print(i)`,
 
 nested_loop: `n = 5
