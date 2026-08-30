@@ -334,12 +334,20 @@ class PyInterpreter {
       if (t.t === 'op' && t.v === '(') {
         this._nx();
         const args = [];
+        const kwargs = [];
         while (!(this._pk().t === 'op' && this._pk().v === ')')) {
           if (this._pk().t === 'op' && this._pk().v === ',') { this._nx(); continue; }
+          if (this._pk().t === 'id' && this._pk(1).t === 'op' && this._pk(1).v === '=') {
+            const kwName = this._nx().v;
+            this._nx();
+            const kwVal = this._parseExpr();
+            kwargs.push({ name: kwName, value: kwVal });
+            continue;
+          }
           args.push(this._parseExpr());
         }
         this._exOp(')');
-        e = { type: 'call', fn: e, args, ln: t.ln };
+        e = { type: 'call', fn: e, args, kwargs, ln: t.ln };
         continue;
       }
       if (t.t === 'op' && t.v === '[') {
@@ -715,28 +723,33 @@ class PyInterpreter {
 
   _evalCall(e, frame) {
     const args = e.args.map(a => this._eval(a, frame));
+    const kwargs = {};
+    if (e.kwargs) e.kwargs.forEach(k => { kwargs[k.name] = this._eval(k.value, frame); });
     const ln = e.ln;
     if (e.fn.type === 'attr') {
       const base = this._eval(e.fn.x, frame);
-      const res = this._callMethod(base, e.fn.name, args);
+      const res = this._callMethod(base, e.fn.name, args, kwargs);
       this._addStep({ ln, desc: `<code>${this._exprName(e.fn.x)}.${e.fn.name}(${args.map(a => this._fv(a)).join(', ')})</code> called`, frames: this._snapFrames(), heap: this._snapHeap(), out: this.output, cs: this._callStack.map(f => f.name) });
       return res;
     }
     const fnName = e.fn.type === 'id' ? e.fn.n : null;
-    if (fnName && this._builtins.has(fnName)) return this._callBuiltin(fnName, args, ln);
+    if (fnName && this._builtins.has(fnName)) return this._callBuiltin(fnName, args, ln, kwargs);
     if (fnName && this.functions[fnName]) {
       this._addStep({ ln, desc: `About to call <b>${fnName}(${args.map(a => this._fv(a)).join(', ')})</b>`, frames: this._snapFrames(), heap: this._snapHeap(), out: this.output, cs: this._callStack.map(f => f.name) });
-      return this._callFn(fnName, args, {}, ln);
+      return this._callFn(fnName, args, kwargs, ln);
     }
     const fv = this._eval(e.fn, frame);
-    if (fv && fv.__func) return this._callFn(fv.__func, args, {}, ln);
+    if (fv && fv.__func) return this._callFn(fv.__func, args, kwargs, ln);
     throw new Error(`TypeError: '${fnName || this._exprName(e.fn)}' is not callable (line ${ln})`);
   }
 
-  _callBuiltin(name, args, ln) {
+  _callBuiltin(name, args, ln, kwargs) {
+    kwargs = kwargs || {};
     switch (name) {
       case 'print': {
-        const s = args.map(a => this._fv(a)).join(' ') + '\n';
+        const sep = kwargs.sep !== undefined ? String(kwargs.sep) : ' ';
+        const end = kwargs.end !== undefined ? String(kwargs.end) : '\n';
+        const s = args.map(a => this._fv(a)).join(sep) + end;
         this.output += s;
         this._addStep({ ln, desc: `<code>print</code>: <b>"${s.replace(/\n/g, '↵').replace(/</g, '&lt;').slice(0, 100)}"</b>`, frames: this._snapFrames(), heap: this._snapHeap(), out: this.output, cs: this._callStack.map(f => f.name) });
         return null;
@@ -1488,8 +1501,6 @@ function setStatus(type, msg) {
 
 applyTheme('dark');
 resetViz();
-
-
 
 
 (function () {
