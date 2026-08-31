@@ -15,6 +15,11 @@ class PyInterpreter {
     this.functions = {};
     this._globalFrame = { name: '[Global]', vars: {}, isGlobal: true };
     this._callStack = [];
+    // Records every list subscript read/write ({name, idx, op}) so the UI
+    // can highlight the exact cell(s) touched by a swap, comparison, or
+    // search match while stepping through the trace (see _recordTouch,
+    // and _addStep which snapshots + clears this into each step object).
+    this._touchLog = [];
     try {
       this._tokenize();
       this._ti = 0;
@@ -468,17 +473,6 @@ class PyInterpreter {
     this._assignTo(s.target, rhs, frame);
     const nm = this._exprName(s.target);
     const step = { ln: s.ln, desc: `Assign <code>${nm}</code> ${s.op} &rarr; <b>${this._fv(rhs)}</b>`, frames: this._snapFrames(), heap: this._snapHeap(), out: this.output, cs: this._callStack.map(f => f.name), chg: nm };
-    if (s.target.type === 'sub') {
-      try {
-        const base = this._eval(s.target.x, frame);
-        const idx = this._eval(s.target.i, frame);
-        if (typeof base === 'string' && this._heap[base]) {
-          const o = this._heap[base];
-          const i2 = (typeof idx === 'number' && idx < 0) ? o.items.length + idx : idx;
-          step.writeAddr = base; step.writeIdx = i2;
-        }
-      } catch (e) { /* best-effort highlight only */ }
-    }
     this._addStep(step);
   }
   _applyAug(op, cur, rhs) {
@@ -506,7 +500,7 @@ class PyInterpreter {
       const base = this._eval(target.x, frame);
       const idx = this._eval(target.i, frame);
       const obj = this._heap[base];
-      if (obj && obj.kind === 'list') { const i2 = idx < 0 ? obj.items.length + idx : idx; obj.items[i2] = val; }
+      if (obj && obj.kind === 'list') { const i2 = idx < 0 ? obj.items.length + idx : idx; obj.items[i2] = val; this._recordTouch(target.x, i2, 'write'); }
       else if (obj && obj.kind === 'dict') { const found = obj.items.find(([k]) => this._pyEq(k, idx)); if (found) found[1] = val; else obj.items.push([idx, val]); }
       return;
     }
@@ -536,6 +530,20 @@ class PyInterpreter {
     if (e.type === 'sub') return this._exprName(e.x) + '[...]';
     if (e.type === 'attr') return this._exprName(e.x) + '.' + e.name;
     return '?';
+  }
+
+  // Records a list-subscript touch ({name, idx, op}) so the UI can
+  // highlight the corresponding cell(s) for the current step. `xNode` is
+  // the base-expression AST node of a `sub` (e.g. the `arr` in `arr[j]`);
+  // `_exprName` resolves it down to the underlying variable name the same
+  // way step descriptions already do. Non-numeric indices or unresolved
+  // names are silently skipped (nothing to highlight).
+  _recordTouch(xNode, idx, op) {
+    if (!this._touchLog) this._touchLog = [];
+    if (typeof idx !== 'number' || !Number.isFinite(idx)) return;
+    const name = this._exprName(xNode);
+    if (!name || name === '?') return;
+    this._touchLog.push({ name, idx: Math.trunc(idx), op });
   }
 
   _execIf(s, frame) {
@@ -617,6 +625,7 @@ class PyInterpreter {
             if (typeof idx !== 'number') throw new Error(`TypeError: list indices must be integers or slices, not ${typeof idx === 'string' ? 'str' : typeof idx}`);
             const i2 = idx < 0 ? o.items.length + idx : idx;
             if (i2 < 0 || i2 >= o.items.length) throw new Error(`IndexError: list index out of range`);
+            this._recordTouch(e.x, i2, 'read');
             return o.items[i2];
           }
           if (o.kind === 'dict') { const f2 = o.items.find(([k]) => this._pyEq(k, idx)); if (!f2) throw new Error(`KeyError: ${this._fv(idx)}`); return f2[1]; }
@@ -675,16 +684,30 @@ class PyInterpreter {
       case '!=': return !this._pyEq(l, r);
       case '<': return l < r; case '>': return l > r;
       case '<=': return l <= r; case '>=': return l >= r;
-      case 'in': return this._containsCheck(l, r);
-      case 'notin': return !this._containsCheck(l, r);
+      case 'in': return this._containsCheck(l, r, e.r);
+      case 'notin': return !this._containsCheck(l, r, e.r);
       case 'is': return l === r; case 'isnot': return l !== r;
       default: return null;
     }
   }
-  _containsCheck(needle, hay) {
+  // Walks a list element-by-element for `in`/`not in` membership tests,
+  // recording each checked index as a 'compare' touch (or 'match' the
+  // moment an equal element is found, at which point the scan stops —
+  // just like a real linear search short-circuits). This lets `x in arr`
+  // light up the exact cells a search would check, the same way an
+  // explicit `for`/`if` linear search already does.
+  _containsCheck(needle, hay, hayNode) {
     if (typeof hay === 'string' && this._heap[hay]) {
       const o = this._heap[hay];
       if (o.kind === 'dict') return o.items.some(([k]) => this._pyEq(k, needle));
+      if (o.kind === 'list') {
+        for (let i = 0; i < o.items.length; i++) {
+          const eq = this._pyEq(o.items[i], needle);
+          this._recordTouch(hayNode, i, eq ? 'match' : 'compare');
+          if (eq) return true;
+        }
+        return false;
+      }
       return o.items.some(v => this._pyEq(v, needle));
     }
     if (typeof hay === 'string') return hay.includes(String(needle));
@@ -732,7 +755,7 @@ class PyInterpreter {
     const ln = e.ln;
     if (e.fn.type === 'attr') {
       const base = this._eval(e.fn.x, frame);
-      const res = this._callMethod(base, e.fn.name, args, kwargs);
+      const res = this._callMethod(base, e.fn.name, args, kwargs, e.fn.x);
       this._addStep({ ln, desc: `<code>${this._exprName(e.fn.x)}.${e.fn.name}(${args.map(a => this._fv(a)).join(', ')})</code> called`, frames: this._snapFrames(), heap: this._snapHeap(), out: this.output, cs: this._callStack.map(f => f.name) });
       return res;
     }
@@ -808,7 +831,7 @@ class PyInterpreter {
     return null;
   }
 
-  _callMethod(base, name, args) {
+  _callMethod(base, name, args, kwargs, baseNode) {
     if (typeof base === 'string' && this._heap[base]) {
       const o = this._heap[base];
       if (o.kind === 'list') {
@@ -819,8 +842,30 @@ class PyInterpreter {
           case 'remove': { const i = o.items.findIndex(v => this._pyEq(v, args[0])); if (i >= 0) o.items.splice(i, 1); return null; }
           case 'sort': o.items.sort((a, b) => a < b ? -1 : a > b ? 1 : 0); if (args.length && args[0]) o.items.reverse(); return null;
           case 'reverse': o.items.reverse(); return null;
-          case 'index': return o.items.findIndex(v => this._pyEq(v, args[0]));
-          case 'count': return o.items.filter(v => this._pyEq(v, args[0])).length;
+          // Same linear-scan touch pattern as `in`/`not in`: walk the
+          // list recording each checked index, stopping (and marking it
+          // 'match') the moment .index()'s target element is found.
+          case 'index': {
+            let found = -1;
+            for (let i = 0; i < o.items.length; i++) {
+              const eq = this._pyEq(o.items[i], args[0]);
+              this._recordTouch(baseNode, i, eq ? 'match' : 'compare');
+              if (eq) { found = i; break; }
+            }
+            return found;
+          }
+          // .count() scans every element (no short-circuit), so every
+          // matching index lights up green and every other checked index
+          // lights up amber.
+          case 'count': {
+            let cnt = 0;
+            for (let i = 0; i < o.items.length; i++) {
+              const eq = this._pyEq(o.items[i], args[0]);
+              this._recordTouch(baseNode, i, eq ? 'match' : 'compare');
+              if (eq) cnt++;
+            }
+            return cnt;
+          }
           case 'clear': o.items.length = 0; return null;
           case 'copy': { const addr = this._heapAddr(); this._heap[addr] = { kind: 'list', items: o.items.slice() }; return addr; }
           case 'extend': o.items.push(...this._iterate(args[0])); return null;
@@ -909,7 +954,13 @@ class PyInterpreter {
     return h;
   }
 
-  _addStep(s) { if (this.steps.length < 6000) this.steps.push(s); }
+  // Also attaches (and clears) the `touches` array recorded via
+  // `_recordTouch` during this step's evaluation, so the UI can highlight
+  // exactly which list cell(s) were just read/written/compared.
+  _addStep(s) {
+    s.touches = this._touchLog ? this._touchLog.splice(0) : [];
+    if (this.steps.length < 6000) this.steps.push(s);
+  }
 }
 
 /* =========================================================================
@@ -1326,6 +1377,104 @@ document.addEventListener('keydown', e => {
   if (e.key === 'F5') { e.preventDefault(); runVisualize(); }
 });
 
+// Derives the current comparison state from a step's own description,
+// but only for `if`/`while` condition steps (`part === 'cond'`). Used to
+// decide whether a just-read list cell should glow green ("match" —
+// e.g. `if arr[mid] == target:` was true) or amber ("compare" — the
+// condition was false), so a search algorithm's progress is visible
+// cell-by-cell as it steps through the list.
+function getMatchState(step) {
+  if (!step || step.part !== 'cond') return null;
+  if (/\btrue\b/i.test(step.desc || '')) return 'true';
+  if (/\bfalse\b/i.test(step.desc || '')) return 'false';
+  return null;
+}
+// Filters a step's touch log down to the entries for a set of variable
+// names that currently alias the same list (e.g. a caller's `nums` and
+// a function parameter `arr` bound to the same heap address), so a
+// list's own cells reflect touches made through *any* of its aliases —
+// not just whichever name happens to be found first.
+function getTouchesForNames(step, names) {
+  if (!step || !step.touches || !names || !names.size) return [];
+  return step.touches.filter(t => names.has(t.name));
+}
+// Finds every local/global variable name that currently holds a given
+// heap address, across every active frame (global scope and any call
+// frames), so a heap block's cell touches — recorded against whichever
+// name the executing code used, e.g. a function parameter — can be
+// matched back to that block regardless of what the caller named it.
+function getVarNamesForAddr(frames, addr) {
+  const names = new Set();
+  if (!frames) return names;
+  for (const fr of frames) {
+    for (const [k, v] of Object.entries(fr.vars || {})) {
+      if (v.value === addr) names.add(k);
+    }
+  }
+  return names;
+}
+
+// Renders one row of list cells. Beyond the existing decimal display,
+// this also:
+//  - draws a value-proportional vertical bar under each numeric cell,
+//    scaled against the largest |value| currently in the list — the
+//    classic "sorting visualizer" bar-chart look, so list height
+//    reflects value;
+//  - colors a cell orange ("swap") if it was just written to in the
+//    current step (e.g. the two cells a bubble/selection/insertion sort
+//    just swapped);
+//  - colors a cell blue ("touch") if it was just read in the current
+//    step with no associated comparison result yet, amber ("compare")
+//    if it was read as part of a false comparison (from an `if`/`while`
+//    condition, or an explicit scan via `in`, `.index()`, `.count()`),
+//    or green ("match") if it was read as part of a comparison that
+//    evaluated true, or is the exact element a search found — this
+//    lights up the cell(s) a search algorithm just checked, and turns
+//    the hit green the moment it's found.
+function buildArrCellsHtml(items, heap, touches, matchState) {
+  touches = touches || [];
+  const touchByIdx = {};
+  const PRIORITY = { write: 3, match: 2, compare: 2, read: 1 };
+  touches.forEach(t => {
+    // A write always wins, then an explicit match/compare (e.g. from
+    // `in`, `.index()`, `.count()`), then a plain read for the same
+    // index within one step.
+    const cur = touchByIdx[t.idx];
+    if (!cur || PRIORITY[t.op] > PRIORITY[cur]) touchByIdx[t.idx] = t.op;
+  });
+
+  const nums = items.filter(x => typeof x === 'number');
+  const maxAbs = nums.length ? Math.max(...nums.map(x => Math.abs(x)), 1) : 1;
+
+  const row = document.createElement('div'); row.className = 'arr-row';
+  items.forEach((it, idx) => {
+    const cell = document.createElement('div');
+    let cellClass = 'arr-cell';
+    const op = touchByIdx[idx];
+    if (op === 'write') {
+      cellClass += ' arr-cell-swap';
+    } else if (op === 'match') {
+      cellClass += ' arr-cell-match';
+    } else if (op === 'compare') {
+      cellClass += ' arr-cell-compare';
+    } else if (op === 'read') {
+      if (matchState === 'true') cellClass += ' arr-cell-match';
+      else if (matchState === 'false') cellClass += ' arr-cell-compare';
+      else cellClass += ' arr-cell-touch';
+    }
+    cell.className = cellClass;
+    let barHtml = '';
+    if (typeof it === 'number') {
+      const h = Math.max(4, Math.round((Math.abs(it) / maxAbs) * 46));
+      barHtml = `<div class="ac-bar-track"><div class="ac-bar-fill" style="height:${h}px"></div></div>`;
+    }
+    cell.innerHTML = `<span class="ac-val">${fmtCell(it, heap)}</span>${barHtml}<span class="ac-idx">[${idx}]</span>`;
+    row.appendChild(cell);
+  });
+  if (!items.length) row.innerHTML = '<span style="color:var(--text3);font-size:12px">(empty)</span>';
+  return row;
+}
+
 function renderStep(idx) {
   const step = interp.steps[idx]; if (!step) return;
   showWalk('', step.desc || '');
@@ -1333,7 +1482,7 @@ function renderStep(idx) {
   sbLine.textContent = step.ln || '—';
   outputArea.textContent = step.out && step.out.length ? step.out : '— no output yet —';
   renderFrames(step.frames, step.chg);
-  renderHeap(step.heap, step.writeAddr, step.writeIdx);
+  renderHeap(step.heap, step);
   renderCS(step.cs);
   renderMM(step.heap);
 }
@@ -1446,12 +1595,14 @@ function renderFrames(frames, chg) {
   }
 }
 
-function renderHeap(heap, writeAddr, writeIdx) {
+function renderHeap(heap, step) {
   if (!heap || !Object.keys(heap).length) {
     heapBlocksEl.innerHTML = '<div class="empty"><i class="fa-solid fa-diagram-project"></i><p>No heap objects yet. Lists, dicts, and sets you create will appear here.</p></div>';
     return;
   }
   heapBlocksEl.innerHTML = '';
+  const frames = step ? step.frames : null;
+  const matchState = getMatchState(step);
   for (const [addr, block] of Object.entries(heap)) {
     const d = document.createElement('div'); d.className = 'heap-block';
     const head = document.createElement('div'); head.className = 'hb-head';
@@ -1459,22 +1610,9 @@ function renderHeap(heap, writeAddr, writeIdx) {
     d.appendChild(head);
     const body = document.createElement('div'); body.className = 'hb-body';
     if (block.kind === 'list' || block.kind === 'set') {
-      const nums = block.items.filter(x => typeof x === 'number');
-      const maxAbs = nums.length ? Math.max(...nums.map(x => Math.abs(x)), 1) : 1;
-      const row = document.createElement('div'); row.className = 'arr-row';
-      block.items.forEach((it, idx) => {
-        const cell = document.createElement('div');
-        const isWrite = addr === writeAddr && idx === writeIdx;
-        cell.className = 'arr-cell' + (isWrite ? ' arr-cell-write' : '');
-        let barHtml = '';
-        if (typeof it === 'number') {
-          const h = Math.max(4, Math.round((Math.abs(it) / maxAbs) * 46));
-          barHtml = `<div class="ac-bar-track"><div class="ac-bar-fill" style="height:${h}px"></div></div>`;
-        }
-        cell.innerHTML = `<span class="ac-val">${fmtCell(it, heap)}</span>${barHtml}<span class="ac-idx">[${idx}]</span>`;
-        row.appendChild(cell);
-      });
-      if (!block.items.length) row.innerHTML = '<span style="color:var(--text3);font-size:12px">(empty)</span>';
+      const varNames = getVarNamesForAddr(frames, addr);
+      const touches = getTouchesForNames(step, varNames);
+      const row = buildArrCellsHtml(block.items, heap, touches, matchState);
       body.appendChild(row);
     } else if (block.kind === 'dict') {
       const tbl = document.createElement('table'); tbl.className = 'dict-tbl';
