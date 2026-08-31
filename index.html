@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Python Visualizer Plus</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@300;400;500;600&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/theme/one-dark.min.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/python/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/edit/matchbrackets.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/selection/active-line.min.js"></script>
+<link rel="stylesheet" href="styles.css">
+<link rel="icon" type="image/x-icon" href="favicon.ico">
+</head>
+<body>
+
+<div id="titlebar">
+  <div class="tb-logo">
+    <div class="tb-logo-icon"><i class="fa-brands fa-python"></i></div>
+    <span class="logo-text">Python Visualizer Plus</span>
+  </div>
+  <div class="tb-sep"></div>
+  <div class="sample-group">
+    <label><i class="fa-solid fa-folder-open"></i></label>
+    <select class="vsc-select" id="sample-sel">
+      <option value="">Supported Examples</option>
+      <optgroup label="Basics">
+        <option value="hello">Hello, World</option>
+        <option value="variables">Variables &amp; Types</option>
+        <option value="arithmetic">Arithmetic Operators</option>
+        <option value="fstrings">F-Strings</option>
+      </optgroup>
+      <optgroup label="Input / Output">
+        <option value="input_add">Add Two Numbers (input)</option>
+      </optgroup>
+      <optgroup label="Control Flow">
+        <option value="if_else">If / Elif / Else</option>
+        <option value="for_loop">For Loop</option>
+        <option value="nested_loop">Nested For Loop</option>
+        <option value="while_loop">While Loop</option>
+      </optgroup>
+      <optgroup label="Functions">
+        <option value="function">Functions</option>
+        <option value="recursion">Factorial (Recursion)</option>
+        <option value="r_fibo">Fibonacci (Recursion)</option>
+        <option value="gcd">GCD (Recursion)</option>
+      </optgroup>
+      <optgroup label="Lists &amp; Strings">
+        <option value="list_basics">List Basics</option>
+        <option value="list_slicing">List Slicing</option>
+        <option value="string_ops">String Operations</option>
+        <option value="aliasing">List Aliasing vs Copy</option>
+      </optgroup>
+      <optgroup label="Dictionaries">
+        <option value="dict_basics">Dictionary Basics</option>
+        <option value="word_count">Word Frequency Counter</option>
+        <option value="class_like_dict">Struct-like Dict</option>
+      </optgroup>
+      <optgroup label="Searching">
+        <option value="linear_search">Linear Search</option>
+        <option value="binary_search">Binary Search</option>
+      </optgroup>
+      <optgroup label="Sorting">
+        <option value="bubble_sort">Bubble Sort</option>
+        <option value="selection_sort">Selection Sort</option>
+      </optgroup>
+      <optgroup label="Mathematics">
+        <option value="fibonacci">Fibonacci Sequence</option>
+        <option value="prime_check">Prime Checker</option>
+      </optgroup>
+    </select>
+  </div>
+  <div class="tb-sep"></div>
+  <button class="tb-btn" id="clear-btn" title="Clear editor">
+    <i class="fa-solid fa-file-circle-plus"></i><span>New</span>
+  </button>
+  <div class="zoom-group" aria-label="Editor zoom controls">
+    <button class="tb-btn icon-only" id="zoom-out-btn" type="button" title="Zoom out code (Ctrl+-)" aria-label="Zoom out">
+      <i class="fa-solid fa-magnifying-glass-minus"></i>
+    </button>
+    <span class="zoom-level" id="zoom-level" aria-live="polite">100%</span>
+    <button class="tb-btn icon-only" id="zoom-in-btn" type="button" title="Zoom in code (Ctrl+=)" aria-label="Zoom in">
+      <i class="fa-solid fa-magnifying-glass-plus"></i>
+    </button>
+  </div>
+  <div class="tb-spacer"></div>
+  <button class="tb-btn primary" id="run-btn">
+    <i class="fa-solid fa-play"></i><span>Visualize</span>
+  </button>
+  <button class="tb-btn icon-only" id="reset-btn" title="Reset visualization">
+    <i class="fa-solid fa-rotate-left"></i>
+  </button>
+  <div class="tb-sep"></div>
+  <button class="tb-btn icon-only" id="theme-toggle" title="Toggle dark / light theme">
+    <i class="fa-solid fa-sun" id="theme-icon"></i>
+  </button>
+</div>
+
+<div id="app">
+  <div id="editor-panel">
+    <div class="editor-tabs">
+      <div class="e-tab active"><i class="fa-brands fa-python"></i> main.py</div>
+      <a href="https://c-visualizer-plus.vercel.app" target="_blank" rel="noopener noreferrer" class="e-tab" style="text-decoration: none; color: inherit; display: inline-flex; align-items: center; gap: 6px;"><div class="tb-logo-icon" style="width: 16px; height: 16px; font-size: 11px; display: inline-flex; align-items: center; justify-content: center; background: #00599c; color: #fff; border-radius: 3px; font-weight: 700;">C</div> C Visualizer Plus</a>
+    </div>
+    <div id="cm-host"><textarea id="code-input"></textarea></div>
+    <div id="ctrl-bar">
+      <button class="ctrl-btn" id="prev-btn" disabled title="Previous step (←)">
+        <i class="fa-solid fa-backward-step"></i> Prev
+      </button>
+      <button class="ctrl-btn" id="next-btn" disabled title="Next step (→)">
+        Next <i class="fa-solid fa-forward-step"></i>
+      </button>
+      <button class="ctrl-btn play-btn" id="play-btn" disabled title="Play (Space)">
+        <i class="fa-solid fa-play"></i> Play
+      </button>
+      <button class="ctrl-btn play-btn" id="pause-btn" disabled style="display:none;background:#cca700;border-color:#cca700" title="Pause (Space)">
+        <i class="fa-solid fa-pause"></i> Pause
+      </button>
+      <div class="step-badge" id="step-info">Not running</div>
+      <div class="speed-wrap">
+        <i class="fa-solid fa-gauge-high"></i>
+        <input type="range" id="speed" min="1" max="10" value="5">
+      </div>
+    </div>
+  </div>
+
+  <div id="resize-handle"></div>
+
+  <div id="viz-panel">
+    <div class="wt-box" id="walkthrough">
+      <b>Welcome to Python Visualizer Plus.</b><br>
+      Write Python in the editor — or pick an example — then click <b>Visualize</b> to step through execution line by line.
+    </div>
+    <div id="viz-grid">
+
+      <div class="viz-card" id="card-memory">
+        <div class="viz-card-hdr">
+          <i class="fa-solid fa-microchip"></i> Variables &amp; Objects
+        </div>
+        <div class="viz-card-body" id="card-memory-body">
+          <div id="mem-cols">
+            <div id="frames-col">
+              <div class="sec-hdr"><i class="fa-solid fa-layer-group"></i> Call Frames</div>
+              <div id="frames-pane"></div>
+            </div>
+            <div id="heap-section">
+              <div class="sec-hdr"><i class="fa-solid fa-diagram-project"></i> Heap Objects <span class="hb-drag-hint">lists · dicts · sets</span></div>
+              <div id="heap-blocks"><div class="empty"><i class="fa-solid fa-diagram-project"></i><p>No heap objects yet. Lists, dicts, and sets you create will appear here.</p></div></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="viz-card" id="card-output">
+        <div class="viz-card-hdr"><i class="fa-solid fa-terminal"></i> Output</div>
+        <div class="viz-card-body">
+          <div id="output-area">— no output yet —</div>
+          <div class="stdin-row">
+            <input hidden type="text" id="stdin-in" placeholder="Queue a value for input()…">
+            <button style="display:none;" class="ctrl-btn" id="stdin-btn"><i class="fa-solid fa-paper-plane"></i> Queue</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="viz-card" id="card-callstack">
+        <div class="viz-card-hdr"><i class="fa-solid fa-layer-group"></i> Call Stack</div>
+        <div class="viz-card-body">
+          <div id="cs-pane"></div>
+        </div>
+      </div>
+
+      <div class="viz-card" id="card-memmap">
+        <div class="viz-card-hdr"><i class="fa-solid fa-map"></i> Heap Address Map</div>
+        <div class="viz-card-body">
+          <div id="mm-pane"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="statusbar">
+  <div class="sb-seg"><i class="fa-solid fa-circle" id="sb-dot" style="font-size:7px"></i> <span id="sb-txt">Ready</span></div>
+  <div class="sb-sep"></div>
+  <div class="sb-seg"><i class="fa-solid fa-code"></i> Line <span id="sb-line">—</span></div>
+  <div class="sb-sep"></div>
+  <div class="sb-seg"><i class="fa-solid fa-shoe-prints"></i> Step <span id="sb-step">—</span></div>
+  <div class="sb-sep"></div>
+  <div class="sb-seg"><i class="fa-solid fa-layer-group"></i> Frames <span id="sb-frames">0</span></div>
+  <div class="sb-spacer"></div>
+  <span class="sb-hint">Python (teaching subset) · ← → navigate · Space play/pause · F5 run</span>
+</div>
+<hr>
+<div id="statusbar">
+    <div class="sb-seg">
+        <a href="https://www.grameenphone.academy/public-profile/GP153876"
+           target="_blank"
+           style="color:#fff;text-decoration:none;font-weight:bold;margin-left:5px;">
+    👨‍💻 Md. Anisur Rahman
+        </a>
+    </div>
+
+    <div class="sb-sep"></div>
+
+   <div class="sb-seg">
+        <strong></strong>
+    </div>
+
+    <div class="sb-spacer"></div>
+
+    <div class="sb-seg">
+        <i class="fa-brands fa-github"></i>
+        <a href="https://github.com/AnisurRahmanJU/Python-Visualizer-Plus"
+           target="_blank"
+           style="color:#fff;text-decoration:none;font-weight:bold;">
+           GitHub
+        </a>
+    </div>
+</div>
+
+<script src="script.js"></script>
+</body>
+</html>
