@@ -1,2 +1,2 @@
 # Py-Visualizer-Plus
-> Write Py Code in the editor - or pick an example - then click Visualize to step through execution line by line.
+> Write any Py code in the editor - or pick an example - then click Visualize button to step-by-step execution.
