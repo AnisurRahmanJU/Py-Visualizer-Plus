@@ -1282,7 +1282,7 @@ function resetViz() {
   heapBlocksEl.innerHTML = '<div class="empty"><i class="fa-solid fa-diagram-project"></i><p>No heap objects yet. Lists, dicts, and sets you create will appear here.</p></div>';
   csEl.innerHTML = '<div class="empty"><i class="fa-solid fa-layer-group"></i><p>No active function calls.</p></div>';
   mmEl.innerHTML = '<div class="empty"><i class="fa-solid fa-map"></i><p>No heap addresses allocated yet.</p></div>';
-  showWalk('', '<b>Welcome to Python Visualizer Plus.</b><br>Write Python in the editor — or pick an example — then click <b>Visualize</b> to step through execution line by line.');
+  showWalk('', '<b>Welcome to Py Visualizer Plus.</b><br>Write Py Code in the editor — or pick an example — then click <b>Visualize</b> to step through execution line by line.');
   clearLineHL(); updateCtrl(); setStatus('', 'Ready');
   sbLine.textContent = '—'; sbStep.textContent = '—'; sbFrames.textContent = '0';
 }
