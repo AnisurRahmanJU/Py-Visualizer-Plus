@@ -15,6 +15,103 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/selection/active-line.min.js"></script>
 <link rel="stylesheet" href="styles.css">
 <link rel="icon" type="image/x-icon" href="favicon.ico">
+
+<!-- ===== Google Identity Services (real login, client-side, no backend/database) ===== -->
+<script src="https://accounts.google.com/gsi/client" async defer></script>
+
+<style>
+  /* ===== Auth UI styles (added) ===== */
+  :root{
+    --cvp-modal-bg:#1e1e2e;
+    --cvp-modal-fg:#f2f2f5;
+    --cvp-modal-border:#3a3a4a;
+    --cvp-accent:#4285F4;
+  }
+  #auth-area{
+    display:flex;
+    align-items:center;
+    gap:8px;
+  }
+  #user-chip{
+    display:none;
+    align-items:center;
+    gap:6px;
+    padding:2px 6px 2px 2px;
+    border-radius:20px;
+    background:rgba(255,255,255,0.08);
+  }
+  #user-avatar{
+    width:26px;height:26px;border-radius:50%;
+    object-fit:cover;
+    border:1px solid rgba(255,255,255,0.35);
+    background:#555;
+    flex-shrink:0;
+  }
+  #user-name{
+    font-size:13px;
+    max-width:130px;
+    overflow:hidden;
+    text-overflow:ellipsis;
+    white-space:nowrap;
+  }
+  #logout-btn{margin-left:2px;}
+
+  #login-modal-overlay{
+    display:none;
+    position:fixed;
+    inset:0;
+    background:rgba(0,0,0,0.55);
+    z-index:9999;
+    align-items:center;
+    justify-content:center;
+  }
+  #login-modal{
+    background:var(--cvp-modal-bg);
+    color:var(--cvp-modal-fg);
+    border:1px solid var(--cvp-modal-border);
+    border-radius:14px;
+    padding:32px 28px 26px;
+    width:340px;
+    max-width:90vw;
+    text-align:center;
+    box-shadow:0 20px 60px rgba(0,0,0,0.55);
+    position:relative;
+    font-family:'Inter',sans-serif;
+  }
+  #login-modal-close{
+    position:absolute;
+    top:10px;right:12px;
+    background:none;
+    border:none;
+    color:var(--cvp-modal-fg);
+    font-size:20px;
+    line-height:1;
+    cursor:pointer;
+    opacity:0.6;
+  }
+  #login-modal-close:hover{opacity:1;}
+  .login-modal-icon{
+    font-size:34px;
+    color:var(--cvp-accent);
+    margin-bottom:10px;
+  }
+  #login-modal h3{
+    margin:4px 0 8px;
+    font-size:18px;
+    font-weight:600;
+  }
+  #login-modal p{
+    font-size:13px;
+    opacity:0.8;
+    margin-bottom:22px;
+    line-height:1.45;
+  }
+  #g_id_signin_container{
+    display:flex;
+    justify-content:center;
+    min-height:44px;
+  }
+</style>
 </head>
 <body>
 
@@ -27,7 +124,7 @@
   <div class="sample-group">
     <label><i class="fa-solid fa-folder-open"></i></label>
     <select class="vsc-select" id="sample-sel">
-      <option value="">Supported Examples</option>
+      <option value="">Pick an example</option>
       <optgroup label="Basics">
         <option value="hello">Hello, World</option>
         <option value="variables">Variables &amp; Types</option>
@@ -98,6 +195,21 @@
   <button class="tb-btn icon-only" id="theme-toggle" title="Toggle dark / light theme">
     <i class="fa-solid fa-sun" id="theme-icon"></i>
   </button>
+  <div class="tb-sep"></div>
+
+  <!-- ===== Login / Logout control (added, right after theme toggle) ===== -->
+  <div id="auth-area">
+    <button class="tb-btn" id="login-btn" title="Login with Google">
+      <i class="fa-brands fa-google"></i><span>Login</span>
+    </button>
+    <div id="user-chip">
+      <img id="user-avatar" src="" alt="">
+      <span id="user-name"></span>
+      <button class="tb-btn icon-only" id="logout-btn" title="Logout">
+        <i class="fa-solid fa-right-from-bracket"></i>
+      </button>
+    </div>
+  </div>
 </div>
 
 <div id="app">
@@ -222,6 +334,194 @@
     </div>
 </div>
 
+<!-- ===== Google Sign-In modal (added) ===== -->
+<div id="login-modal-overlay">
+  <div id="login-modal">
+    <button id="login-modal-close" title="Close">&times;</button>
+    <div class="login-modal-icon"><i class="fa-brands fa-google"></i></div>
+    <h3>Sign in required</h3>
+    <p id="login-modal-msg">Sign in with Google to continue.</p>
+    <div id="g_id_signin_container"></div>
+  </div>
+</div>
+
 <script src="script.js"></script>
+
+<!-- ===== Google login gating logic (added) ===== -->
+<script>
+(function () {
+  // Same Client ID used in C Visualizer Plus (Google Cloud project: c-visualizer-plus-509609)
+  const GOOGLE_CLIENT_ID = "67521400455-0bt9eptaruohutmhnmlo4mpbm4lj6dqt.apps.googleusercontent.com";
+
+  // Dropdown examples: FREE for "Basics", "Input / Output", "Control Flow" —
+  // everything from "Functions" onward requires login.
+  const FREE_VALUES = [
+    // Basics
+    'hello', 'variables', 'arithmetic', 'fstrings',
+    // Input / Output
+    'input_add',
+    // Control Flow
+    'if_else', 'for_loop', 'nested_loop', 'while_loop'
+  ];
+
+  const STORAGE_KEY = 'pvp_user';
+  let pendingAction = null; // { type: 'sample', value } | { type: 'new' }
+
+  function getStoredUser() {
+    try { return JSON.parse(localStorage.getItem(STORAGE_KEY) || 'null'); }
+    catch (e) { return null; }
+  }
+  function setStoredUser(u) {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(u));
+  }
+  function clearStoredUser() {
+    localStorage.removeItem(STORAGE_KEY);
+  }
+
+  function parseJwt(token) {
+    try {
+      const base64Url = token.split('.')[1];
+      const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
+      const jsonPayload = decodeURIComponent(
+        atob(base64).split('').map(function (c) {
+          return '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2);
+        }).join('')
+      );
+      return JSON.parse(jsonPayload);
+    } catch (e) { return null; }
+  }
+
+  function updateAuthUI() {
+    const user = getStoredUser();
+    const loginBtn = document.getElementById('login-btn');
+    const userChip = document.getElementById('user-chip');
+    if (user) {
+      loginBtn.style.display = 'none';
+      userChip.style.display = 'flex';
+      document.getElementById('user-avatar').src = user.picture || '';
+      document.getElementById('user-name').textContent = user.name || user.email || 'Signed in';
+    } else {
+      loginBtn.style.display = 'inline-flex';
+      userChip.style.display = 'none';
+    }
+  }
+
+  function openLoginModal(msg) {
+    document.getElementById('login-modal-msg').textContent =
+      msg || 'Please sign in with Google to continue.';
+    document.getElementById('login-modal-overlay').style.display = 'flex';
+    try {
+      if (window.google && google.accounts && google.accounts.id) {
+        const container = document.getElementById('g_id_signin_container');
+        container.innerHTML = '';
+        google.accounts.id.renderButton(container, {
+          theme: 'outline', size: 'large', type: 'standard', shape: 'pill'
+        });
+        google.accounts.id.prompt();
+      }
+    } catch (e) { console.error('Google Sign-In error:', e); }
+  }
+
+  function closeLoginModal() {
+    document.getElementById('login-modal-overlay').style.display = 'none';
+    pendingAction = null;
+  }
+
+  function handleCredentialResponse(response) {
+    const payload = parseJwt(response.credential);
+    if (!payload) return;
+
+    const user = { name: payload.name, email: payload.email, picture: payload.picture };
+    setStoredUser(user);
+    updateAuthUI();
+    document.getElementById('login-modal-overlay').style.display = 'none';
+
+    if (pendingAction) {
+      if (pendingAction.type === 'sample') {
+        const sel = document.getElementById('sample-sel');
+        sel.value = pendingAction.value;
+        const ev = new Event('change', { bubbles: true });
+        ev.__authorized = true;
+        sel.dispatchEvent(ev);
+      } else if (pendingAction.type === 'new') {
+        const clearBtn = document.getElementById('clear-btn');
+        const ev = new Event('click', { bubbles: true });
+        ev.__authorized = true;
+        clearBtn.dispatchEvent(ev);
+      }
+      pendingAction = null;
+    }
+  }
+  // Exposed for the Google Identity Services callback
+  window.handleCredentialResponse = handleCredentialResponse;
+
+  function initGoogle() {
+    if (window.google && google.accounts && google.accounts.id) {
+      google.accounts.id.initialize({
+        client_id: GOOGLE_CLIENT_ID,
+        callback: handleCredentialResponse,
+        auto_select: false,
+        cancel_on_tap_outside: true
+      });
+      return true;
+    }
+    return false;
+  }
+
+  function waitForGoogle(retries) {
+    if (initGoogle()) return;
+    if (retries <= 0) return;
+    setTimeout(function () { waitForGoogle(retries - 1); }, 150);
+  }
+
+  window.addEventListener('load', function () {
+    updateAuthUI();
+    waitForGoogle(40); // GIS script loads async/defer, so poll briefly
+
+    document.getElementById('login-btn').addEventListener('click', function () {
+      openLoginModal('Sign in with Google to unlock all features.');
+    });
+
+    document.getElementById('logout-btn').addEventListener('click', function () {
+      clearStoredUser();
+      updateAuthUI();
+      if (window.google && google.accounts && google.accounts.id) {
+        google.accounts.id.disableAutoSelect();
+      }
+    });
+
+    document.getElementById('login-modal-close').addEventListener('click', closeLoginModal);
+    document.getElementById('login-modal-overlay').addEventListener('click', function (e) {
+      if (e.target === this) closeLoginModal();
+    });
+
+    // Gate: dropdown selection — Basics / Input-Output / Control Flow are free, rest need login
+    const sampleSel = document.getElementById('sample-sel');
+    sampleSel.addEventListener('change', function (e) {
+      if (e.__authorized) return; // programmatic replay after successful login
+      const val = this.value;
+      if (val && FREE_VALUES.indexOf(val) === -1 && !getStoredUser()) {
+        e.stopImmediatePropagation();
+        e.preventDefault();
+        pendingAction = { type: 'sample', value: val };
+        this.value = '';
+        openLoginModal('Sign in with Google to access this example.');
+      }
+    }, true); // capture phase: runs before script.js's own listener
+
+    // Gate: "New" button — always requires login
+    const clearBtn = document.getElementById('clear-btn');
+    clearBtn.addEventListener('click', function (e) {
+      if (e.__authorized) return; // programmatic replay after successful login
+      if (!getStoredUser()) {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        pendingAction = { type: 'new' };
+        openLoginModal('Sign in with Google to start a new file.');
+      }
+    }, true); // capture phase: runs before script.js's own listener
+  });
+})();
+</script>
 </body>
 </html>
