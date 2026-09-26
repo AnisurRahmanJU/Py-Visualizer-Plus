@@ -173,7 +173,7 @@
   </div>
   <div class="tb-sep"></div>
   <button class="tb-btn" id="clear-btn" title="Clear editor">
-    <i class="fa-solid fa-file-circle-plus"></i><span>Write a new code</span>
+    <i class="fa-solid fa-file-circle-plus"></i><span>New</span>
   </button>
   <div class="zoom-group" aria-label="Editor zoom controls">
     <button class="tb-btn icon-only" id="zoom-out-btn" type="button" title="Zoom out code (Ctrl+-)" aria-label="Zoom out">
@@ -483,6 +483,7 @@
     });
 
     document.getElementById('logout-btn').addEventListener('click', function () {
+      if (!confirm('Do you want to logout?')) return;
       clearStoredUser();
       updateAuthUI();
       if (window.google && google.accounts && google.accounts.id) {
