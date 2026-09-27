@@ -1281,6 +1281,7 @@ document.addEventListener('mouseup', () => {
 });
 
 const runBtn = document.getElementById('run-btn'), resetBtn = document.getElementById('reset-btn');
+const directRunBtn = document.getElementById('direct-run-btn');
 const prevBtn = document.getElementById('prev-btn'), nextBtn = document.getElementById('next-btn');
 const playBtn = document.getElementById('play-btn'), pauseBtn = document.getElementById('pause-btn');
 const stepInfo = document.getElementById('step-info'), speedSlider = document.getElementById('speed');
@@ -1303,6 +1304,7 @@ function sendStdin() {
 }
 
 runBtn.addEventListener('click', runVisualize);
+if (directRunBtn) directRunBtn.addEventListener('click', directRunVisualize);
 resetBtn.addEventListener('click', resetViz);
 
 function runVisualize() {
@@ -1320,6 +1322,35 @@ function runVisualize() {
     if (!interp.steps.length) { showWalk('err', 'No steps generated.'); setStatus('error', 'No steps'); return; }
     curStep = 0; renderStep(0); updateCtrl();
     setStatus('ok', `Ready — ${interp.steps.length} steps`);
+  } catch (e) {
+    showWalk('err', '<i class="fa-solid fa-triangle-exclamation"></i> ' + (e.message || String(e)));
+    setStatus('error', 'Error');
+  }
+}
+
+// ── Direct "Run" — behaves exactly like Visualize (same parse/interpret,
+// same error surfacing, same output/frame/heap rendering) but instead of
+// landing on step 1 for manual step-through, it jumps straight to the
+// final step so the person sees the finished program output immediately,
+// like running a compiled program end-to-end. Mirrors C Visualizer Plus's
+// direct-run-btn behavior exactly.
+function directRunVisualize() {
+  stopPlay();
+  const code = cmEditor.getValue();
+  if (!code.trim()) { showWalk('err', '<i class="fa-solid fa-triangle-exclamation"></i> Please enter some Python code.'); return; }
+  setStatus('running', 'Running…');
+  clearOutput();
+  try {
+    interp = new PyInterpreter(code, stdinQ.slice());
+    if (interp.errors.length) {
+      showWalk('err', '<i class="fa-solid fa-triangle-exclamation"></i> ' + interp.errors.join('<br>'));
+      setStatus('error', 'Error'); updateCtrl(); return;
+    }
+    if (!interp.steps.length) { showWalk('err', 'No steps generated.'); setStatus('error', 'No steps'); return; }
+    curStep = interp.steps.length - 1;
+    renderStep(curStep);
+    updateCtrl();
+    setStatus('ok', `Finished — ran ${interp.steps.length} steps`);
   } catch (e) {
     showWalk('err', '<i class="fa-solid fa-triangle-exclamation"></i> ' + (e.message || String(e)));
     setStatus('error', 'Error');
